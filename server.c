@@ -6,13 +6,11 @@
 #include <pthread.h>
 #include <crypt.h>
 #include <sys/stat.h>
-#include <errno.h>
+#include <time.h>
 
 #define SERVER_PORT 12345
 #define USERS_FILE "DiscorIT/users.csv"
-#define CHANNELS_FILE "DiscorIT/channels.csv"
 #define SALT "$6$rounds=5000$usesomesillystringforsalt$"  // Example salt for SHA-512
-#define BUFFER_SIZE 1000  // Adjusted to ensure enough space
 
 // Function to check if file exists
 int file_exists(const char *filename) {
@@ -34,15 +32,6 @@ void initialize_files() {
         }
         fclose(file);
     }
-
-    if (!file_exists(CHANNELS_FILE)) {
-        FILE *file = fopen(CHANNELS_FILE, "w");
-        if (file == NULL) {
-            perror("Failed to create channels file");
-            exit(EXIT_FAILURE);
-        }
-        fclose(file);
-    }
 }
 
 void register_user(int client_sockfd, char *username, char *password) {
@@ -52,7 +41,7 @@ void register_user(int client_sockfd, char *username, char *password) {
         return;
     }
 
-    char line[BUFFER_SIZE];
+    char line[256];
     while (fgets(line, sizeof(line), file)) {
         char existing_username[50];
         sscanf(line, "%*d,%49[^,],%*s,%*s", existing_username);
@@ -84,8 +73,8 @@ void register_user(int client_sockfd, char *username, char *password) {
     fprintf(file, "%d,%s,%s,%s\n", id, username, hashed_password, role);
     fclose(file);
 
-    char response[BUFFER_SIZE];
-    snprintf(response, sizeof(response), "%s successfully registered\n", username);
+    char response[256];
+    sprintf(response, "%s successfully registered\n", username);
     send(client_sockfd, response, strlen(response), 0);
 }
 
@@ -96,7 +85,7 @@ void login_user(int client_sockfd, char *username, char *password) {
         return;
     }
 
-    char line[BUFFER_SIZE];
+    char line[256];
     while (fgets(line, sizeof(line), file)) {
         int id;
         char existing_username[50], existing_password[200], role[10];
@@ -114,8 +103,8 @@ void login_user(int client_sockfd, char *username, char *password) {
             printf("Computed hash: %s\n", hashed_password); // Debug log
 
             if (strcmp(hashed_password, existing_password) == 0) {
-                char response[BUFFER_SIZE];
-                snprintf(response, sizeof(response), "%s successfully logged in\n", username);
+                char response[256];
+                sprintf(response, "%s successfully logged in\n", username);
                 send(client_sockfd, response, strlen(response), 0);
             } else {
                 send(client_sockfd, "Incorrect password\n", 19, 0);
@@ -128,77 +117,9 @@ void login_user(int client_sockfd, char *username, char *password) {
     fclose(file);
 }
 
-// Fungsi untuk membuat channel baru
-void create_channel(int client_sockfd, char *username, char *channel_name, char *key) {
-    // Membuat direktori channel jika belum ada
-    char channel_path[BUFFER_SIZE];
-    snprintf(channel_path, sizeof(channel_path), "DiscorIT/%s", channel_name);
-    if (mkdir(channel_path, 0755) == -1) {
-        if (errno != EEXIST) {
-            perror("Failed to create channel directory");
-            send(client_sockfd, "Failed to create channel\n", 25, 0);
-            return;
-        }
-    }
-
-    // Membuat direktori admin di dalam channel
-    char admin_path[BUFFER_SIZE];
-    snprintf(admin_path, sizeof(admin_path), "%s/admin", channel_path);
-    if (mkdir(admin_path, 0755) == -1) {
-        if (errno != EEXIST) {
-            perror("Failed to create admin directory");
-            send(client_sockfd, "Failed to create admin directory\n", 33, 0);
-            return;
-        }
-    }
-
-    // Membuat file auth.csv untuk channel
-    char auth_file[BUFFER_SIZE];
-    snprintf(auth_file, sizeof(auth_file), "%s/auth.csv", admin_path);
-    FILE *auth_fp = fopen(auth_file, "w");
-    if (!auth_fp) {
-        perror("Failed to create auth.csv file");
-        send(client_sockfd, "Failed to create auth.csv file\n", 31, 0);
-        return;
-    }
-    // Menambahkan admin ke file auth.csv
-    fprintf(auth_fp, "1,%s,ADMIN\n", username);
-    fclose(auth_fp);
-
-    // Menambahkan channel ke channels.csv
-    FILE *channels_fp = fopen(CHANNELS_FILE, "a+");
-    if (!channels_fp) {
-        perror("Failed to open channels.csv file");
-        send(client_sockfd, "Failed to open channels.csv file\n", 33, 0);
-        return;
-    }
-
-    char line[BUFFER_SIZE];
-    int id = 1;
-    while (fgets(line, sizeof(line), channels_fp)) {
-        int existing_id;
-        sscanf(line, "%d,%*s,%*s", &existing_id);
-        if (existing_id >= id) {
-            id = existing_id + 1;
-        }
-    }
-
-    char *hashed_key = crypt(key, SALT);
-    if (hashed_key == NULL) {
-        send(client_sockfd, "Error hashing key\n", 18, 0);
-        fclose(channels_fp);
-        return;
-    }
-
-    fprintf(channels_fp, "%d,%s,%s\n", id, channel_name, hashed_key);
-    fclose(channels_fp);
-
-    send(client_sockfd, "Channel created successfully\n", 29, 0);
-}
-
 void *handle_client(void *client_sockfd_ptr) {
     int client_sockfd = *(int *)client_sockfd_ptr;
-    char buffer[BUFFER_SIZE];
+    char buffer[256];
     while (1) {
         int len = recv(client_sockfd, buffer, sizeof(buffer), 0);
         if (len <= 0) {
@@ -206,7 +127,7 @@ void *handle_client(void *client_sockfd_ptr) {
         }
         buffer[len] = '\0';
 
-        char command[20], username[50], password[50], channel_name[50], key[50];
+        char command[10], username[50], password[50];
         if (sscanf(buffer, "%s %s -p %s", command, username, password) == 3) {
             if (strcmp(command, "REGISTER") == 0) {
                 register_user(client_sockfd, username, password);
@@ -215,8 +136,6 @@ void *handle_client(void *client_sockfd_ptr) {
             } else {
                 send(client_sockfd, "Invalid command\n", 16, 0);
             }
-        } else if (sscanf(buffer, "CREATE CHANNEL %s -k %s", channel_name, key) == 2) {
-            create_channel(client_sockfd, username, channel_name, key);
         } else {
             send(client_sockfd, "Invalid command format\n", 23, 0);
         }
@@ -225,53 +144,42 @@ void *handle_client(void *client_sockfd_ptr) {
     return NULL;
 }
 
-void start_server() {
+int main() {
+    initialize_files();
+
     int server_sockfd = socket(AF_INET, SOCK_STREAM, 0);
     if (server_sockfd < 0) {
         perror("Socket creation failed");
-        exit(EXIT_FAILURE);
+        return 1;
     }
 
     struct sockaddr_in server_addr;
     server_addr.sin_family = AF_INET;
-    server_addr.sin_addr.s_addr = INADDR_ANY;
     server_addr.sin_port = htons(SERVER_PORT);
+    server_addr.sin_addr.s_addr = INADDR_ANY;
 
     if (bind(server_sockfd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
         perror("Bind failed");
-        close(server_sockfd);
-        exit(EXIT_FAILURE);
+        return 1;
     }
 
     if (listen(server_sockfd, 5) < 0) {
         perror("Listen failed");
-        close(server_sockfd);
-        exit(EXIT_FAILURE);
+        return 1;
     }
-
-    printf("Server is listening on port %d\n", SERVER_PORT);
 
     while (1) {
         struct sockaddr_in client_addr;
-        socklen_t client_len = sizeof(client_addr);
-        int client_sockfd = accept(server_sockfd, (struct sockaddr *)&client_addr, &client_len);
+        socklen_t client_addr_len = sizeof(client_addr);
+        int client_sockfd = accept(server_sockfd, (struct sockaddr *)&client_addr, &client_addr_len);
         if (client_sockfd < 0) {
             perror("Accept failed");
             continue;
         }
-
-        pthread_t thread;
-        int *client_sockfd_ptr = malloc(sizeof(int));
-        *client_sockfd_ptr = client_sockfd;
-        pthread_create(&thread, NULL, handle_client, client_sockfd_ptr);
-        pthread_detach(thread);
+        pthread_t client_thread;
+        pthread_create(&client_thread, NULL, handle_client, &client_sockfd);
     }
 
     close(server_sockfd);
-}
-
-int main() {
-    initialize_files();
-    start_server();
     return 0;
 }
