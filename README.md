@@ -5,4 +5,4 @@
 - Aisyah Rahmasari (5027231072)
 - Dionisius Marcell Putra Indranto (5027231044)
 
-## Program Discorit
+## Program Server.c
